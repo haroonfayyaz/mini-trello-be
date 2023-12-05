@@ -1,0 +1,31 @@
+version: "3.5"
+
+services:
+  web:
+    build: .
+    ports:
+      - 8080:8080
+    command: "python app.py"
+    # env_file:
+    #   - .env
+    volumes:
+      - ./:/app
+  dynamo:
+    container_name: mini-trello-db
+    image: amazon/dynamodb-local
+    networks:
+      - mini-trello
+    ports:
+      - "8000:8000"
+    volumes:
+      - dynamodata:/home/dynamodblocal
+    working_dir: /home/dynamodblocal
+    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath ."
+
+networks:
+  mini-trello:
+    name: mini-trello
+    external: true
+
+volumes:
+  dynamodata: {}
