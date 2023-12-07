@@ -4,12 +4,14 @@ services:
   web:
     build: .
     ports:
-      - 8080:8080
-    command: "python app.py"
-    # env_file:
-    #   - .env
-    volumes:
-      - ./:/app
+      - 8080:5000
+    command: "flask run"
+    env_file:
+      - .env
+    networks:
+      - mini-trello
+    # volumes:
+    #   - ./:/app
   dynamo:
     container_name: mini-trello-db
     image: amazon/dynamodb-local
