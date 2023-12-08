@@ -46,7 +46,7 @@ class Query(graphene.ObjectType):
                     'name': list_item.get('name', ''),
                     'cards': list_item.get('cards', '')
                 }
-
+                print('card is', list_item.get('cards', ''))
                 lists.append(List(**list_data))
 
             return lists

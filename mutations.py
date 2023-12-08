@@ -67,11 +67,13 @@ def fetch_card_from_data_store(card_id):
     item = response.get('Item')
 
     if item:
+
         return {
             'id': item.get('id').get('S'),
             'title': item.get('title').get('S'),
             'description': item.get('description').get('S'),
-            'estimate': int(item.get('estimate').get('N'))
+            'estimate': int(item.get('estimate').get('N')),
+            'timestamp': item.get('timestamp').get('S'),
         }
     else:
         return None
@@ -85,7 +87,7 @@ def save_list_to_data_store(list_item):
             'name': {'S': list_item['name']},
             'cards': {'L': list_item['cards'] or []}
         }
-
+        print('item is', item)
         response = dynamodb.put_item(
             TableName='BoardList',
             Item=item
@@ -100,15 +102,46 @@ def save_list_to_data_store(list_item):
         raise e
 
 
+def fetch_lists_with_card(card_id):
+    try:
+        # Initialize an empty list to store the lists containing the card
+        lists_with_card = []
+
+        # Scan the 'BoardList' table in DynamoDB
+        response = dynamodb.scan(
+            TableName='BoardList'
+        )
+
+        # Iterate through each item in the response
+        for item in response.get('Items', []):
+            # Check if the 'cards' attribute contains the specified card_id
+            cards = item.get('cards', {}).get('L', [])
+            for card in cards:
+                card_item = card.get('M', {})
+                if 'id' in card_item and card_item['id'].get('S') == card_id:
+                    list_item = {
+                        'id': item.get('id', {}).get('S'),
+                        'name': item.get('name', {}).get('S'),
+                        'cards': cards
+                    }
+                    lists_with_card.append(list_item)
+                    break  # No need to continue checking this list
+
+        return lists_with_card
+
+    except Exception as e:
+        raise e
+
+
 class CreateCard(graphene.Mutation):
     class Arguments:
         title = graphene.String(required=True)
-        description = graphene.String(required=True)
-        estimate = graphene.Int(required=True)
+        description = graphene.String()
+        estimate = graphene.Int()
 
     card = graphene.Field(Card)
 
-    def mutate(self, info, title, description, estimate):
+    def mutate(self, info, title, description='', estimate=0):
         try:
             timestamp = datetime.utcnow()
             id = str(int(timestamp.timestamp()))
@@ -147,7 +180,8 @@ class DeleteCard(graphene.Mutation):
 
     def mutate(self, info, id):
         try:
-            get_card_by_id(id)
+            print('prior')
+            card_data = get_card_by_id(id)
 
             response = dynamodb.delete_item(
                 TableName='Cards',
@@ -157,6 +191,15 @@ class DeleteCard(graphene.Mutation):
             )
 
             if response.get('ResponseMetadata', {}).get('HTTPStatusCode') == 200:
+                lists_with_card = fetch_lists_with_card(id)
+                for list_item in lists_with_card:
+                    if 'cards' in list_item:
+                        cards_list = list_item['cards']
+                        for i, card_obj in enumerate(cards_list):
+                            if card_obj['M']['id']['S'] == id:
+                                cards_list.pop(i)
+                                save_list_to_data_store(list_item)
+
                 return DeleteCard(success=True)
 
             raise Exception("Failed to delete card")
@@ -269,7 +312,8 @@ class AddCardToList(graphene.Mutation):
                             "id": {"S": existing_card['id']},
                             "title": {"S": existing_card['title']},
                             "description": {"S": existing_card['description']},
-                            "estimate": {"N": str(existing_card['estimate'])}
+                            "estimate": {"N": str(existing_card['estimate'])},
+                            "timestamp": {"S": existing_card['timestamp']}
                         }
                     }
 
@@ -287,35 +331,111 @@ class AddCardToList(graphene.Mutation):
             raise Exception(str(e))
 
 
-class RemoveCardFromList(graphene.Mutation):
+# class RemoveCardFromList(graphene.Mutation):
+#     class Arguments:
+#         list_id = graphene.ID(required=True)
+#         card_id = graphene.ID(required=True)
+
+#     list = graphene.Field(List)
+
+#     def mutate(self, info, list_id, card_id):
+#         try:
+
+#             list_item = fetch_list_from_data_store(list_id)
+
+#             if list_item:
+
+#                 cards_list = list_item.get('cards', [])
+
+#                 for i, card_obj in enumerate(cards_list):
+#                     if card_obj['M']['id']['S'] == card_id:
+#                         # Remove the card from the list
+#                         removed_card = cards_list.pop(i)
+
+#                         save_list_to_data_store(list_item)
+
+#                         return RemoveCardFromList(list=list_item)
+
+#                 raise Exception("Card not found in the list")
+
+#             else:
+#                 raise Exception("List not found")
+
+#         except Exception as e:
+#             raise Exception(str(e))
+
+class ManageCardInList(graphene.Mutation):
     class Arguments:
-        list_id = graphene.ID(required=True)
+        source_list_id = graphene.ID(required=True)
+        destination_list_id = graphene.ID()
         card_id = graphene.ID(required=True)
 
-    list = graphene.Field(List)
+    source_list = graphene.Field(List)
+    destination_list = graphene.Field(List)
 
-    def mutate(self, info, list_id, card_id):
+    def mutate(self, info, source_list_id, card_id, destination_list_id=None):
         try:
 
-            list_item = fetch_list_from_data_store(list_id)
+            source_list_item = fetch_list_from_data_store(source_list_id)
 
-            if list_item:
+            if source_list_item:
+                if destination_list_id:
 
-                cards_list = list_item.get('cards', [])
+                    destination_list_item = fetch_list_from_data_store(
+                        destination_list_id)
+                    if destination_list_item:
 
-                for i, card_obj in enumerate(cards_list):
-                    if card_obj['M']['id']['S'] == card_id:
-                        # Remove the card from the list
-                        removed_card = cards_list.pop(i)
+                        source_cards_list = source_list_item.get('cards', [])
+                        for i, card_obj in enumerate(source_cards_list):
+                            if card_obj['M']['id']['S'] == card_id:
+                                removed_card = source_cards_list.pop(i)
+                                break
+                        else:
+                            raise Exception(
+                                "Card not found in the source list")
 
-                        save_list_to_data_store(list_item)
+                        destination_cards_list = destination_list_item.get(
+                            'cards', [])
+                        card_exists = False
+                        for card_obj in destination_cards_list:
+                            if card_obj['M']['id']['S'] == card_id:
+                                card_exists = True
+                                break
 
-                        return RemoveCardFromList(list=list_item)
+                        if not card_exists:
 
-                raise Exception("Card not found in the list")
+                            card_item = {
+                                "M": {
+                                    "id": {"S": removed_card['M']['id']['S']},
+                                    "title": {"S": removed_card['M']['title']['S']},
+                                    "description": {"S": removed_card['M']['description']['S']},
+                                    "estimate": {"N": removed_card['M']['estimate']['N']},
+                                    "timestamp": {'S': removed_card['M']['timestamp']['S']}
+                                }
+                            }
+                            destination_cards_list.append(card_item)
 
+                            save_list_to_data_store(source_list_item)
+                            save_list_to_data_store(destination_list_item)
+
+                        return ManageCardInList(source_list=source_list_item, destination_list=destination_list_item)
+                    else:
+                        raise Exception("Destination list not found")
+                else:
+
+                    source_cards_list = source_list_item.get('cards', [])
+                    for i, card_obj in enumerate(source_cards_list):
+                        if card_obj['M']['id']['S'] == card_id:
+                            removed_card = source_cards_list.pop(i)
+                            break
+                    else:
+                        raise Exception("Card not found in the source list")
+
+                    save_list_to_data_store(source_list_item)
+
+                    return ManageCardInList(source_list=source_list_item, destination_list=None)
             else:
-                raise Exception("List not found")
+                raise Exception("Source list not found")
 
         except Exception as e:
             raise Exception(str(e))
@@ -394,4 +514,5 @@ class Mutation(graphene.ObjectType):
     delete_list = DeleteList.Field()
     update_list = UpdateListName.Field()
     add_card_to_list = AddCardToList.Field()
-    remove_card_from_list = RemoveCardFromList.Field()
+    # remove_card_from_list = RemoveCardFromList.Field()
+    manage_card_in_list = ManageCardInList.Field()

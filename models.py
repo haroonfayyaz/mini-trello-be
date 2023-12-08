@@ -10,7 +10,7 @@ class Card(graphene.ObjectType):
     id = graphene.ID()
     title = graphene.String()
     description = graphene.String()
-    timestamp = graphene.DateTime(default_value=datetime.utcnow())
+    timestamp = graphene.String(default_value=datetime.utcnow())
     estimate = graphene.Int()
 
 
