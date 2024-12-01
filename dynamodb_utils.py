@@ -2,7 +2,8 @@ import os
 import boto3
 from boto3.dynamodb.conditions import Key
 
-dynamodb = boto3.resource('dynamodb', endpoint_url=os.environ['DYNAMO_URL'])
+dynamodb = boto3.resource('dynamodb', endpoint_url=os.environ['DYNAMODB_ENDPOINT_URL'])
+dynamodb_client = boto3.client('dynamodb', endpoint_url=os.getenv('DYNAMODB_ENDPOINT_URL'))
 
 
 def get_cards():
@@ -16,56 +17,64 @@ def get_lists():
     response = table.scan()
     return response.get('Items', [])
 
+def fetch_card_from_data_store(card_id, attributes_to_fetch=None):
+    # Create the base request parameters
+    request_params = {
+        'TableName': 'Cards',
+        'Key': {'id': {'S': card_id}}
+    }
 
-# # Create the 'Cards' table
-# table = dynamodb.create_table(
-#     TableName='Cards',
-#     KeySchema=[
-#         {
-#             'AttributeName': 'id',
-#             'KeyType': 'HASH'
-#         },
-#     ],
-#     AttributeDefinitions=[
-#         {
-#             'AttributeName': 'id',
-#             'AttributeType': 'S'
-#         },
-#     ],
-#     ProvisionedThroughput={
-#         'ReadCapacityUnits': 5,
-#         'WriteCapacityUnits': 5
-#     }
-# )
+    # Only add ProjectionExpression if attributes_to_fetch is provided
+    if attributes_to_fetch:
+        request_params['ProjectionExpression'] = ", ".join(attributes_to_fetch)
 
-# Wait for the table to be created (optional)
+    # Make the DynamoDB request
+    response = dynamodb_client.get_item(**request_params)
 
-
-# aws dynamodb scan --table-name Cards --endpoint-url http://localhost:8000
-# aws dynamodb list-tables --endpoint-url http://localhost:8000
+    item = response.get('Item')
+    
+    if item:
+        result = {}
+        for key, value in item.items():
+            if 'S' in value:
+                result[key] = value['S']
+            elif 'N' in value:
+                result[key] = int(value['N'])
+            elif 'L' in value:
+                result[key] = value['L']
+            elif 'M' in value:
+                result[key] = value['M']
+        return result
+    else:
+        return None
 
 
-# table_name = 'BoardList'
+def fetch_lists_with_card(card_id):
+    try:
+        # Initialize an empty list to store the lists containing the card
+        lists_with_card = []
 
-# table = dynamodb.create_table(
-#     TableName=table_name,
-#     KeySchema=[
-#         {
-#             'AttributeName': 'id',
-#             'KeyType': 'HASH'  # HASH type for the primary key
-#         }
-#     ],
-#     AttributeDefinitions=[
-#         {
-#             'AttributeName': 'id',
-#             'AttributeType': 'S'  # 'S' for string attribute type
-#         }
-#     ],
-#     ProvisionedThroughput={
-#         'ReadCapacityUnits': 5,  # Adjust according to your needs
-#         'WriteCapacityUnits': 5  # Adjust according to your needs
-#     }
-# )
+        # Scan the 'BoardList' table in DynamoDB
+        response = dynamodb_client.scan(
+            TableName='BoardList'
+        )
 
-# wait
-# table.meta.client.get_waiter('table_exists').wait(TableName=table_name)
+        # Iterate through each item in the response
+        for item in response.get('Items', []):
+            # Check if the 'cards' attribute contains the specified card_id
+            cards = item.get('cards', {}).get('L', [])
+            for card in cards:
+                card_item = card.get('M', {})
+                if 'id' in card_item and card_item['id'].get('S') == card_id:
+                    list_item = {
+                        'id': item.get('id', {}).get('S'),
+                        'name': item.get('name', {}).get('S'),
+                        'cards': cards
+                    }
+                    lists_with_card.append(list_item)
+                    break  # No need to continue checking this list
+
+        return lists_with_card
+
+    except Exception as e:
+        raise e

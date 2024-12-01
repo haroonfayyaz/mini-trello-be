@@ -3,3 +3,5 @@ log/*
 .DS_STORE
 temp/*
 trello/
+.env
+.venv

@@ -1,3 +1,8 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # models.py
 
 import boto3
@@ -6,8 +11,9 @@ from models import Card, List
 from datetime import datetime
 from graphql import GraphQLError
 from exceptions import CardNotFoundError, ListNotFoundError
+from dynamodb_utils import fetch_card_from_data_store, fetch_lists_with_card
 
-dynamodb = boto3.client('dynamodb', endpoint_url='http://localhost:8000')
+dynamodb = boto3.client('dynamodb', endpoint_url=os.getenv('DYNAMODB_ENDPOINT_URL'))
 
 
 def get_card_by_id(id):
@@ -56,29 +62,6 @@ def fetch_list_from_data_store(list_id):
     else:
         return None
 
-
-def fetch_card_from_data_store(card_id):
-
-    response = dynamodb.get_item(
-        TableName='Cards',
-        Key={'id': {'S': card_id}}
-    )
-
-    item = response.get('Item')
-
-    if item:
-
-        return {
-            'id': item.get('id').get('S'),
-            'title': item.get('title').get('S'),
-            'description': item.get('description').get('S'),
-            'estimate': int(item.get('estimate').get('N')),
-            'timestamp': item.get('timestamp').get('S'),
-        }
-    else:
-        return None
-
-
 def save_list_to_data_store(list_item):
     try:
 
@@ -87,7 +70,6 @@ def save_list_to_data_store(list_item):
             'name': {'S': list_item['name']},
             'cards': {'L': list_item['cards'] or []}
         }
-        print('item is', item)
         response = dynamodb.put_item(
             TableName='BoardList',
             Item=item
@@ -100,38 +82,6 @@ def save_list_to_data_store(list_item):
 
     except Exception as e:
         raise e
-
-
-def fetch_lists_with_card(card_id):
-    try:
-        # Initialize an empty list to store the lists containing the card
-        lists_with_card = []
-
-        # Scan the 'BoardList' table in DynamoDB
-        response = dynamodb.scan(
-            TableName='BoardList'
-        )
-
-        # Iterate through each item in the response
-        for item in response.get('Items', []):
-            # Check if the 'cards' attribute contains the specified card_id
-            cards = item.get('cards', {}).get('L', [])
-            for card in cards:
-                card_item = card.get('M', {})
-                if 'id' in card_item and card_item['id'].get('S') == card_id:
-                    list_item = {
-                        'id': item.get('id', {}).get('S'),
-                        'name': item.get('name', {}).get('S'),
-                        'cards': cards
-                    }
-                    lists_with_card.append(list_item)
-                    break  # No need to continue checking this list
-
-        return lists_with_card
-
-    except Exception as e:
-        raise e
-
 
 class CreateCard(graphene.Mutation):
     class Arguments:
@@ -180,7 +130,6 @@ class DeleteCard(graphene.Mutation):
 
     def mutate(self, info, id):
         try:
-            print('prior')
             card_data = get_card_by_id(id)
 
             response = dynamodb.delete_item(
@@ -220,26 +169,34 @@ class UpdateCard(graphene.Mutation):
 
     success = graphene.Boolean()
 
-    def mutate(self, info, id, title=None, description=None, estimate=None):
+    def mutate(self, info, id, **kwargs):
         try:
             get_card_by_id(id)
+
+            update_expression = []
+            expression_attribute_names = {}
+            expression_attribute_values = {}
+
+            for key, value in kwargs.items():
+                if value is not None:
+                    update_expression.append(f"#{key} = :{key}")
+                    expression_attribute_names[f'#{key}'] = key
+                    if isinstance(value, int):
+                        expression_attribute_values[f':{key}'] = {'N': str(value)}
+                    else:
+                        expression_attribute_values[f':{key}'] = {'S': value}
+
+            if not update_expression:
+                raise Exception("No valid attributes provided for update")
 
             response = dynamodb.update_item(
                 TableName='Cards',
                 Key={
                     'id': {'S': id}
                 },
-                UpdateExpression='SET #title = :title, #description = :description, #estimate = :estimate',
-                ExpressionAttributeNames={
-                    '#title': 'title',
-                    '#description': 'description',
-                    '#estimate': 'estimate'
-                },
-                ExpressionAttributeValues={
-                    ':title': {'S': title} if title else None,
-                    ':description': {'S': description} if description else None,
-                    ':estimate': {'N': str(estimate)} if estimate is not None else None
-                }
+                UpdateExpression='SET ' + ', '.join(update_expression),
+                ExpressionAttributeNames=expression_attribute_names,
+                ExpressionAttributeValues=expression_attribute_values
             )
 
             return UpdateCard(success=True)
@@ -303,7 +260,7 @@ class AddCardToList(graphene.Mutation):
 
                     card_ids = [card['M']['id']['S']
                                 for card in list_item.get('cards', [])]
-                    print('idss')
+
                     if card_id in card_ids:
                         raise Exception("Card already exists in the list")
 

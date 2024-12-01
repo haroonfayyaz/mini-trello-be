@@ -1,17 +1,15 @@
-version: "3.5"
-
 services:
   web:
     build: .
     ports:
       - 8080:5000
-    command: "flask run"
+    command: "flask run --host=0.0.0.0"
     env_file:
       - .env
     networks:
       - mini-trello
-    # volumes:
-    #   - ./:/app
+    volumes:
+      - ./:/app
   dynamo:
     container_name: mini-trello-db
     image: amazon/dynamodb-local
@@ -27,7 +25,6 @@ services:
 networks:
   mini-trello:
     name: mini-trello
-    external: true
 
 volumes:
   dynamodata: {}

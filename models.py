@@ -12,6 +12,7 @@ class Card(graphene.ObjectType):
     description = graphene.String()
     timestamp = graphene.String(default_value=datetime.utcnow())
     estimate = graphene.Int()
+    list = graphene.Field(lambda: List)
 
 
 class List(graphene.ObjectType):
