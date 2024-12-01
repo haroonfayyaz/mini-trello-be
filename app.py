@@ -4,6 +4,10 @@ from schema import schema
 from flask_cors import CORS
 from init_db import initialize_database
 import logging
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -11,7 +15,12 @@ logging.basicConfig(
 )
 
 app = Flask(__name__)
-CORS(app, supports_credentials=True)
+
+# Get allowed origins from the environment
+allowed_origins = os.getenv('ALLOWED_ORIGINS', '*').split(',')
+
+# Configure CORS with specific origins
+CORS(app, origins=allowed_origins, supports_credentials=True)
 
 # Initialize database tables before the app starts
 initialize_database()
